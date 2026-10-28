@@ -13,13 +13,13 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "VerifSDK",
-            url: "https://github.com/verif-online/msdk-ios/releases/download/0.1.0/VerifSDK.xcframework.zip",
-            checksum: "7730e516694dc4ec1e82c0aeb60160764a3f92e635bb092094fcd7a0a1a470c7"
+            url: "https://github.com/verif-online/msdk-ios/releases/download/0.1.1/VerifSDK.xcframework.zip",
+            checksum: "38f83af629d3782422669188c63e9b0ab14878d12aeea37066ba0d2119192eb6"
         ),
         .binaryTarget(
             name: "VerifSDKDesignSystem",
-            url: "https://github.com/verif-online/msdk-ios/releases/download/0.1.0/VerifSDKDesignSystem.xcframework.zip",
-            checksum: "6ec5565c35d539ce65b54a2cb6f44c47b7b4076fa21f3ba608f5a61c818234c9"
+            url: "https://github.com/verif-online/msdk-ios/releases/download/0.1.1/VerifSDKDesignSystem.xcframework.zip",
+            checksum: "83e7060e052cf89470a49e5b3f455b4110b3b8d63e9fbc0542029ae238cb5b7e"
         ),
         .target(
             name: "VerifSDKResourceCarrier",
