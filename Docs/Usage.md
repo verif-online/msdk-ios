@@ -11,8 +11,7 @@ bundle. При подключении через SwiftPM ресурсы дост
 ## Что понадобится
 
 - Приложение на **iOS 16.0** или новее, на SwiftUI или UIKit.
-- Для этой поставки используется **Xcode 27.3 Beta**. Совместимость бинарного
-  пакета с более ранними Xcode отдельно не подтверждена.
+- Минимальная версия Xcode для пакета **0.2.0** — **Xcode 27.3 Beta**.
 - Ваш сервер, который может получить сессию проверки в Verif.
 - Интернет и разрешение камеры. Для настоящей съёмки нужен физический iPhone.
 
@@ -109,36 +108,48 @@ struct VerificationButton: View {
     let onResult: (VerifResult) -> Void
     let onFailure: (Error) -> Void
 
-    @State private var flow: VerifFlowView?
-    @State private var isPresented = false
+    private struct PresentedFlow: Identifiable {
+        let id = UUID()
+        let view: VerifFlowView
+    }
+
+    @State private var flow: PresentedFlow?
+    @State private var presentation: VerifPresentationController?
 
     var body: some View {
         Button("Начать проверку") {
-            flow = Verif.start(
-                configuration: configuration,
-                onFlowFinished: { result in
-                    isPresented = false
-                    onResult(result)
-                },
-                onError: { error in
-                    isPresented = false
-                    onFailure(error)
-                }
-            )
-            isPresented = true
-        }
-        .disabled(isPresented)
-        .fullScreenCover(
-            isPresented: $isPresented,
-            onDismiss: { flow = nil }
-        ) {
-            if let flow {
-                flow
+            let controller = VerifPresentationController {
+                flow = nil
             }
+            presentation = controller
+            let view = Verif.start(
+                configuration: configuration,
+                presentation: controller,
+                onFlowFinished: onResult,
+                onError: onFailure
+            )
+            flow = PresentedFlow(view: view)
+        }
+        .disabled(presentation != nil)
+        .fullScreenCover(
+            item: $flow,
+            onDismiss: {
+                let closedPresentation = presentation
+                presentation = nil
+                closedPresentation?.didDismiss()
+            }
+        ) { presented in
+            presented.view
         }
     }
 }
 ```
+
+`fullScreenCover(item:)` передаёт готовый экран в презентацию. SDK просит закрыть экран, а приложение
+подтверждает завершение через `didDismiss()`. Только после этого вызывается
+`onResult` или `onFailure`, поэтому из них можно открыть следующий экран.
+Создавайте отдельный controller на каждый запуск. При внешнем закрытии тоже
+вызовите `didDismiss()` после окончания закрытия, не при уходе приложения в фон.
 
 ### UIKit
 
@@ -165,14 +176,8 @@ func showVerification(
     Verif.start(
         configuration: configuration,
         navigationController: navigationController,
-        onFlowFinished: { [weak navigationController] result in
-            navigationController?.presentedViewController?.dismiss(animated: true)
-            onResult(result)
-        },
-        onError: { [weak navigationController] error in
-            navigationController?.presentedViewController?.dismiss(animated: true)
-            onFailure(error)
-        }
+        onFlowFinished: onResult,
+        onError: onFailure
     )
 }
 ```
@@ -188,7 +193,7 @@ func showVerification(
 | Обработчик | Когда вызывается |
 | --- | --- |
 | `onFlowFinished` | Пользователь завершил экран проверки или отменил её. Аргумент — `VerifResult`. |
-| `onError` | Проверка остановлена из-за технической ошибки. Аргумент — `Error`. |
+| `onError` | Пользователь вышел с экрана технической ошибки. Аргумент — `Error`, который можно привести к `VerifError`. |
 
 В `onFlowFinished` разберите результат:
 
@@ -199,21 +204,34 @@ func message(for result: VerifResult) -> String {
         return "Проверка пройдена"
     case .rejected(_):
         return "Проверка не пройдена"
+    case .review:
+        return "Данные отправлены, решение ещё не получено"
+    case .unavailable:
+        return "Проверка больше недоступна"
     case .cancelled:
         return "Пользователь закрыл проверку"
     case .error(_):
         return "Не удалось завершить проверку"
+    @unknown default:
+        return "Неизвестный результат проверки"
     }
 }
 ```
 
-В `onError` закройте SDK и предложите повторить попытку. Не рассчитывайте, что эта
-ошибка обязательно придёт ещё и в `onFlowFinished`. SDK **не закрывает экран сам** —
-это делают обработчики в примерах. Если следом нужно показать alert или другой
-экран, дождитесь окончания закрытия: `onDismiss` в SwiftUI или `completion` у UIKit `dismiss`.
+SDK не отправляет одну и ту же ошибку в оба обработчика. Если задан `onError`,
+она приходит только туда; без него — в `onFlowFinished` как `.error`.
+Для обработки причины используйте `VerifError.code` и, если он есть,
+`VerifError.correlationId`. Не разбирайте `localizedDescription` как код ошибки.
+
+В существующем SwiftUI-вызове без managed presentation callback остаётся сигналом
+хосту закрыть SDK. Для callback **после** закрытия используйте managed presentation,
+описанный выше. UIKit navigation entrypoint закрывает собственный экран SDK сам:
+повторно вызывать `dismiss` в его callback не нужно.
 
 Загрузка фото ещё не означает успешную проверку. Пока сервер обрабатывает данные,
-SDK показывает ожидание; отдельного публичного результата `pending` нет.
+SDK показывает ожидание. Если пользователь выходит после подтверждённой отправки,
+возвращается `.review`; до отправки — `.cancelled`. Новый запрос данных от сервера
+снова требует действий пользователя и не считается завершённой отправкой.
 `.approved` означает одобрение, а не просто отправку файлов. Техническую
 недоступность проверки не трактуйте как отказ пользователю.
 
@@ -242,6 +260,10 @@ func configurationWithRenewal(
 
 Без него истечение токена или отказ авторизации завершат попытку ошибкой.
 После обновления SDK повторяет отклонённый API-запрос не более одного раза.
+На получение новой сессии даётся 45 секунд. При ошибке или тайм-ауте SDK показывает
+экран связи с кнопкой «Повторить». Повтор запускается только пользователем:
+максимум 3 последовательных неуспеха и 10 обращений за проверку. Успешное
+обновление сбрасывает последовательные неуспехи, но не общий счётчик.
 Обновление не гарантирует продолжение уже начатой загрузки: если сервер больше
 не принимает её, может понадобиться повторить шаг.
 
@@ -318,7 +340,46 @@ func configurationWithCustomColors(
 Фон значка — его акцент с прозрачностью 0.12. Неактивная кнопка использует
 `surfaceMuted` и приглушённый `primaryText`. `accentStart` / `accentEnd` не управляют кнопкой.
 
-## Обновление с 0.1.x
+## Общие настройки с Android и React Native
+
+Существующий `VerifTheme.Palette` остаётся структурой. Если у приложения уже есть
+общая тема v7, её значения можно передать через адаптер:
+
+```swift
+var sharedTheme = VerifThemeV7()
+sharedTheme.colors.light.primary = "#2563EB"
+sharedTheme.colors.dark.primary = "#60A5FA"
+sharedTheme.typography.bodySizeSp = 16
+sharedTheme.shapes.inputCornerRadiusDp = 8
+
+let theme = VerifTheme(v7: sharedTheme)
+```
+
+Передайте `theme` в конфигурацию SDK. Цвета задаются как `#RRGGBB` или
+`#RRGGBBAA`, где последние две цифры — прозрачность. На iOS размеры текста
+и скругления считаются в points. Неверное поле заменяется встроенным значением,
+остальные настройки продолжают действовать. Светлая и тёмная схемы выбираются
+по настройке устройства.
+
+Общий каталог текстов тоже можно использовать без работы с ресурсными файлами:
+
+```swift
+let texts = VerifLocalizationOverrides(msdkTexts: [
+    "msdk_overview_headline": "Проверка личности",
+    "msdk_overview_btn_start": "Продолжить"
+])
+```
+
+Передайте `texts` как `localizationOverrides` в конфигурацию. Это один набор
+строк для выбранного языка: карту `ru` или `en` выбирает приложение до создания
+конфигурации. Именованные поля `VerifLocalizationOverrides` остаются доступны.
+Отсутствующие, пустые и неизвестные ключи используют штатные тексты SDK.
+Названия документов и причины от сервера, системный запрос доступа к камере
+этот каталог не заменяет. Для специфичных iOS-экранов, включая форму документа,
+используйте именованные поля, если соответствующего ключа в общем каталоге нет.
+Ключи экранов, которых нет в iOS SDK, например видео-проверки, не применяются.
+
+## Обновление приложения
 
 В 0.2.0 дизайн-система включена в основной фреймворк. В коде приложения оставьте
 только `import VerifSDK`. Прямые `import VerifSDKDesignSystem` удалите, а имена вида
@@ -331,11 +392,22 @@ func configurationWithCustomColors(
 который использовал только `import VerifSDK`, менять не нужно, но приложение тоже
 нужно пересобрать. Обновление не меняет формат серверной сессии или адреса API.
 
+Добавьте в обработку результатов `.review` и `.unavailable`, ошибки разбирайте
+через `VerifError`, а не по тексту сообщения. Если вы раньше вручную закрывали
+SDK из callback UIKit navigation entrypoint, удалите повторный `dismiss`.
+Для собственного `UIHostingController` или React Native используйте managed
+presentation и подтверждайте фактическое закрытие из UIKit `dismiss` completion.
+
+Пакет 0.2.0 перевыпускается по решению владельца. Если приложение уже подключало
+первоначальные бинарники 0.2.0, обновите локальный кэш SwiftPM и заново разрешите
+зависимость. При несовпадении checksum не отключайте проверку целостности:
+проверьте, что manifest и архив получены из одной поставки.
+
 ## Перед выпуском приложения
 
 - Пройдите проверку на реальном iPhone: камера, документ, селфи и завершение.
 - Проверьте запрет камеры, потерю сети, отмену и истечение сессии.
-- Убедитесь, что обработчики закрывают SDK и не запускают его заново автоматически.
+- Убедитесь, что SDK закрывается один раз и обработчики не запускают его заново автоматически.
 - Проверьте обе темы, большой системный шрифт и нужные языки.
 - Для production используйте production-адрес и соответствующую сессию.
 
@@ -343,4 +415,4 @@ func configurationWithCustomColors(
 обновление README не обновляет скачанный бинарный SDK.
 
 Для старых интеграций сохранён подписанный вход `VerifConfiguration.sdkInit`.
-В новой интеграции используйте готовую сессию, как описано выше.
+В новой интеграции используйте готовую сессию.
