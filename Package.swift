@@ -10,7 +10,7 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "VerifSDK",
-            url: "https://github.com/verif-online/msdk-ios/releases/download/0.2.0/VerifSDK-0.2.0-reissue.xcframework.zip",
+            url: "https://github.com/verif-online/msdk-ios/releases/download/0.2.0/VerifSDK.xcframework.zip",
             checksum: "edde0f3f9311b8d82843c1cac96fb7d906bcd899e06976d58fd17407d9a5e625"
         ),
         .target(
