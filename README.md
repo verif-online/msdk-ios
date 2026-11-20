@@ -16,7 +16,7 @@ VerifSDK добавляет в приложение проверку докум�
 
 1. В Xcode откройте **File → Add Package Dependencies…**.
 2. Введите `https://github.com/verif-online/msdk-ios`.
-3. Выберите **Exact Version → 0.3.0** и добавьте продукт `VerifSDK`.
+3. Выберите **Exact Version → 0.3.1** и добавьте продукт `VerifSDK`.
 4. Добавьте `NSCameraUsageDescription` в `Info.plist` приложения.
 
 В коде достаточно `import VerifSDK`. SwiftPM подключает один XCFramework и
